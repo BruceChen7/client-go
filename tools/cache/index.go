@@ -33,15 +33,18 @@ import (
 // 3. an "indexed value", which is produced by an IndexFunc and
 //    can be a field value or any other string computed from the object.
 type Indexer interface {
+	// 组合Store接口，在store存储的基础上，扩展了对象查找的能力
 	Store
 	// Index returns the stored objects whose set of indexed values
 	// intersects the set of indexed values of the given object, for
 	// the named index
+	// IndexName是索引函数名，obj是对象，
 	Index(indexName string, obj interface{}) ([]interface{}, error)
 	// IndexKeys returns the storage keys of the stored objects whose
 	// set of indexed values for the named index includes the given
 	// indexed value
 	IndexKeys(indexName, indexedValue string) ([]string, error)
+	// 列举索引函数 indexName 所有的索引键
 	// ListIndexFuncValues returns all the indexed values of the given index
 	ListIndexFuncValues(indexName string) []string
 	// ByIndex returns the stored objects whose set of indexed values
@@ -56,6 +59,7 @@ type Indexer interface {
 }
 
 // IndexFunc knows how to compute the set of indexed values for an object.
+// 索引函数，输入一个对象，输出是该对象对应的索引链表
 type IndexFunc func(obj interface{}) ([]string, error)
 
 // IndexFuncToKeyFuncAdapter adapts an indexFunc to a keyFunc.  This is only useful if your index function returns
@@ -88,6 +92,7 @@ func MetaNamespaceIndexFunc(obj interface{}) ([]string, error) {
 	if err != nil {
 		return []string{""}, fmt.Errorf("object has no meta: %v", err)
 	}
+	// 返回名字空间的索引
 	return []string{meta.GetNamespace()}, nil
 }
 
@@ -98,4 +103,4 @@ type Index map[string]sets.String
 type Indexers map[string]IndexFunc
 
 // Indices maps a name to an Index
-type Indices map[string]Index
+type Indices map[string]Index // name to 多个索引键的映射
