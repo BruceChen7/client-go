@@ -44,7 +44,7 @@ type Indexer interface {
 	// set of indexed values for the named index includes the given
 	// indexed value
 	IndexKeys(indexName, indexedValue string) ([]string, error)
-	// 列举索引函数 indexName 所有的索引键
+	// 列举索引函数indexName 对应的所有对象键
 	// ListIndexFuncValues returns all the indexed values of the given index
 	ListIndexFuncValues(indexName string) []string
 	// ByIndex returns the stored objects whose set of indexed values
@@ -92,15 +92,20 @@ func MetaNamespaceIndexFunc(obj interface{}) ([]string, error) {
 	if err != nil {
 		return []string{""}, fmt.Errorf("object has no meta: %v", err)
 	}
-	// 返回名字空间的索引
+	// 返回名字空间作为索引
 	return []string{meta.GetNamespace()}, nil
 }
 
 // Index maps the indexed value to a set of keys in the store that match on that value
+// 这个是string是对象键，用于查找资源对象
+// Indexers： 索引函数名  ======>  索引函数  ======> 索引key值
+
 type Index map[string]sets.String
 
 // Indexers maps a name to a IndexFunc
 type Indexers map[string]IndexFunc
 
 // Indices maps a name to an Index
+// 这个string是索引函数名
+// Indices： 索引函数名  ======> 对应多个索引key值 ======> 每个索引key值对应 不同的资源。(可能不同的索引key值对应相同的资源对象)
 type Indices map[string]Index // name to 多个索引键的映射

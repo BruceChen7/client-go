@@ -25,22 +25,30 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// 定义一个
 func testIndexFunc(obj interface{}) ([]string, error) {
+    // 断言是一个pod
 	pod := obj.(*v1.Pod)
+    // 返回pod.Labels是一个map[string]string
 	return []string{pod.Labels["foo"]}, nil
 }
 
 func TestGetIndexFuncValues(t *testing.T) {
 	index := NewIndexer(MetaNamespaceKeyFunc, Indexers{"testmodes": testIndexFunc})
 
+    // 创建几个pod对象
 	pod1 := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "one", Labels: map[string]string{"foo": "bar"}}}
 	pod2 := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "two", Labels: map[string]string{"foo": "bar"}}}
 	pod3 := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "tre", Labels: map[string]string{"foo": "biz"}}}
 
+    // 存储pod1
 	index.Add(pod1)
+    // 存储pod2
 	index.Add(pod2)
+    // 存储pod3
 	index.Add(pod3)
 
+    // 获取testmodes下的所有的键
 	keys := index.ListIndexFuncValues("testmodes")
 	if len(keys) != 2 {
 		t.Errorf("Expected 2 keys but got %v", len(keys))
@@ -55,6 +63,7 @@ func TestGetIndexFuncValues(t *testing.T) {
 
 func testUsersIndexFunc(obj interface{}) ([]string, error) {
 	pod := obj.(*v1.Pod)
+    // Annotations也是map[string][string]类型
 	usersString := pod.Annotations["users"]
 
 	return strings.Split(usersString, ","), nil
@@ -67,11 +76,13 @@ func TestMultiIndexKeys(t *testing.T) {
 	pod2 := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "two", Annotations: map[string]string{"users": "bert,oscar"}}}
 	pod3 := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "tre", Annotations: map[string]string{"users": "ernie,elmo"}}}
 
+    // 在本地cache中添加pod
 	index.Add(pod1)
 	index.Add(pod2)
 	index.Add(pod3)
 
 	expected := map[string]sets.String{}
+    // sets.String类似于std::set<std::strint>类型
 	expected["ernie"] = sets.NewString("one", "tre")
 	expected["bert"] = sets.NewString("one", "two")
 	expected["elmo"] = sets.NewString("tre")
@@ -80,11 +91,13 @@ func TestMultiIndexKeys(t *testing.T) {
 	{
 		for k, v := range expected {
 			found := sets.String{}
+            // 通过2级查找
 			indexResults, err := index.ByIndex("byUser", k)
 			if err != nil {
 				t.Errorf("Unexpected error %v", err)
 			}
 			for _, item := range indexResults {
+                // 获取匹配的pods name
 				found.Insert(item.(*v1.Pod).Name)
 			}
 			items := v.List()
@@ -94,6 +107,7 @@ func TestMultiIndexKeys(t *testing.T) {
 		}
 	}
 
+    // 删除pods3
 	index.Delete(pod3)
 	erniePods, err := index.ByIndex("byUser", "ernie")
 	if err != nil {
