@@ -97,16 +97,16 @@ type ExplicitKey string
 // TODO: replace key-as-string with a key-as-struct so that this
 // packing/unpacking won't be necessary.
 func MetaNamespaceKeyFunc(obj interface{}) (string, error) {
-    // 如果obj本身是string，那么直接使用其值为索引
+	// 如果obj本身是string，那么直接使用其值为索引
 	if key, ok := obj.(ExplicitKey); ok {
 		return string(key), nil
 	}
-    // 获取其对象的meta数据
+	// 获取其对象的meta数据
 	meta, err := meta.Accessor(obj)
 	if err != nil {
 		return "", fmt.Errorf("object has no meta: %v", err)
 	}
-    // 获取名字空间不为空，使用名字空间 + 名称的方式作为索引
+	// 获取名字空间不为空，使用名字空间 + 名称的方式作为索引
 	if len(meta.GetNamespace()) > 0 {
 		return meta.GetNamespace() + "/" + meta.GetName(), nil
 	}
@@ -147,24 +147,24 @@ var _ Store = &cache{}
 // Add inserts an item into the cache.
 // obj是一对象，可能是pod，endpoint对象之类的
 func (c *cache) Add(obj interface{}) error {
-    // 算出对象真正的索引
+	// 算出对象真正的索引
 	key, err := c.keyFunc(obj)
 	if err != nil {
 		return KeyError{obj, err}
 	}
-    // 存储对应的obj
+	// 存储对应的obj
 	c.cacheStorage.Add(key, obj)
 	return nil
 }
 
 // Update sets an item in the cache to its updated state.
 func (c *cache) Update(obj interface{}) error {
-    // 获取索引建
+	// 获取索引建
 	key, err := c.keyFunc(obj)
 	if err != nil {
 		return KeyError{obj, err}
 	}
-    // 更新资源对象
+	// 更新资源对象
 	c.cacheStorage.Update(key, obj)
 	return nil
 }

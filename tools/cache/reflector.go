@@ -45,6 +45,7 @@ import (
 
 const defaultExpectedTypeName = "<unspecified>"
 
+// 作用是向apiserver watch 指定的资源
 // Reflector watches a specified resource and causes all changes to be reflected in the given store.
 type Reflector struct {
 	// name identifies this reflector. By default it will be a file:line if possible.
@@ -171,6 +172,7 @@ var internalPackages = []string{"client-go/tools/cache/"}
 // Run repeatedly uses the reflector's ListAndWatch to fetch all the
 // objects and subsequent deltas.
 // Run will exit when stopCh is closed.
+// 这应该是Reflector入口
 func (r *Reflector) Run(stopCh <-chan struct{}) {
 	klog.V(2).Infof("Starting reflector %s (%s) from %s", r.expectedTypeName, r.resyncPeriod, r.name)
 	wait.BackoffUntil(func() {
@@ -209,6 +211,7 @@ func (r *Reflector) resyncChan() (<-chan time.Time, func() bool) {
 // It returns error if ListAndWatch didn't even try to initialize watch.
 func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 	klog.V(3).Infof("Listing and watching %v from %s", r.expectedTypeName, r.name)
+	// 资源的版本号
 	var resourceVersion string
 
 	options := metav1.ListOptions{ResourceVersion: r.relistResourceVersion()}
@@ -301,6 +304,7 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 		}
 		resourceVersion = listMetaInterface.GetResourceVersion()
 		initTrace.Step("Resource version extracted")
+		// 提取items
 		items, err := meta.ExtractList(list)
 		if err != nil {
 			return fmt.Errorf("%s: Unable to understand list result %#v (%v)", r.name, list, err)
@@ -320,6 +324,7 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 	resyncerrc := make(chan error, 1)
 	cancelCh := make(chan struct{})
 	defer close(cancelCh)
+	// 创建协程
 	go func() {
 		resyncCh, cleanup := r.resyncChan()
 		defer func() {
@@ -340,6 +345,7 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 					return
 				}
 			}
+			// 再一次的触发
 			cleanup()
 			resyncCh, cleanup = r.resyncChan()
 		}
@@ -367,6 +373,7 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 
 		// start the clock before sending the request, since some proxies won't flush headers until after the first watch event is sent
 		start := r.clock.Now()
+		// 监听资源变化
 		w, err := r.listerWatcher.Watch(options)
 		if err != nil {
 			switch {
@@ -393,6 +400,7 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 			return nil
 		}
 
+		// 处理资源列表
 		if err := r.watchHandler(start, w, &resourceVersion, resyncerrc, stopCh); err != nil {
 			if err != errorStopRequested {
 				switch {

@@ -39,7 +39,7 @@ import (
 // to a re-index. So it's not a good idea to directly modify the objects returned by
 // Get/List, in general.
 type ThreadSafeStore interface {
-    // 添加索引值对应的资源对象
+	// 添加索引值对应的资源对象
 	Add(key string, obj interface{})
 	Update(key string, obj interface{})
 	Delete(key string)
@@ -62,8 +62,8 @@ type ThreadSafeStore interface {
 
 // threadSafeMap implements ThreadSafeStore
 type threadSafeMap struct {
-	lock  sync.RWMutex
-    // 真正的存储对应的资源对象
+	lock sync.RWMutex
+	// 真正的存储对应的资源对象
 	items map[string]interface{}
 
 	// indexers maps a name to an IndexFunc
@@ -120,7 +120,7 @@ func (c *threadSafeMap) ListKeys() []string {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 	list := make([]string, 0, len(c.items))
-    // 返回的是对象键
+	// 返回的是对象键
 	for key := range c.items {
 		list = append(list, key)
 	}
@@ -146,27 +146,27 @@ func (c *threadSafeMap) Index(indexName string, obj interface{}) ([]interface{},
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 
-    // /通过索引函数名 indexName 获取 索引函数
-    // 对应的计算对象key的函数
+	// /通过索引函数名 indexName 获取 索引函数
+	// 对应的计算对象key的函数
 	indexFunc := c.indexers[indexName]
 	if indexFunc == nil {
 		return nil, fmt.Errorf("Index with name %s does not exist", indexName)
 	}
 
-    // 算出对应资源的对象键
+	// 算出对应资源的对象键
 	indexedValues, err := indexFunc(obj)
 	if err != nil {
 		return nil, err
 	}
-    // 类型 indices Indices
+	// 类型 indices Indices
 	index := c.indices[indexName]
 
 	var storeKeySet sets.String
-    // 对象建只有一个
+	// 对象建只有一个
 	if len(indexedValues) == 1 {
 		// In majority of cases, there is exactly one value matching.
 		// Optimize the most common path - deduping is not needed here.
-        // 获取对应的资源对象的
+		// 获取对应的资源对象的
 		storeKeySet = index[indexedValues[0]]
 	} else {
 		// Need to de-dupe the return list.
@@ -181,7 +181,7 @@ func (c *threadSafeMap) Index(indexName string, obj interface{}) ([]interface{},
 
 	list := make([]interface{}, 0, storeKeySet.Len())
 	for storeKey := range storeKeySet {
-        // 真正的获取资源列表
+		// 真正的获取资源列表
 		list = append(list, c.items[storeKey])
 	}
 	return list, nil
@@ -193,16 +193,16 @@ func (c *threadSafeMap) ByIndex(indexName, indexedValue string) ([]interface{}, 
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 
-    // 获取索引函数名
+	// 获取索引函数名
 	indexFunc := c.indexers[indexName]
 	if indexFunc == nil {
 		return nil, fmt.Errorf("Index with name %s does not exist", indexName)
 	}
 
-    // 获取索引建
+	// 获取索引建
 	index := c.indices[indexName]
 
-    // 获取对象键, 找到对应的资源
+	// 获取对象键, 找到对应的资源
 	set := index[indexedValue]
 	list := make([]interface{}, 0, set.Len())
 	for key := range set {
