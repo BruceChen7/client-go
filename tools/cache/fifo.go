@@ -62,6 +62,7 @@ type Queue interface {
 	// return that (key, accumulator) association to the Queue as part
 	// of the atomic processing and (b) return the inner error from
 	// Pop.
+	// 先进先出，从队列中弹出对象
 	Pop(PopProcessFunc) (interface{}, error)
 
 	// AddIfNotPresent puts the given accumulator into the Queue (in
@@ -76,7 +77,7 @@ type Queue interface {
 	HasSynced() bool
 
 	// Close the queue
-	Close()
+	Close() // 关闭队列
 }
 
 // Pop is helper function for popping from Queue.
@@ -110,10 +111,10 @@ func Pop(queue Queue) interface{} {
 // Compare with DeltaFIFO for other use cases.
 type FIFO struct {
 	lock sync.RWMutex
-	cond sync.Cond
+	cond sync.Cond // 条件变量，用来唤醒携程
 	// We depend on the property that every key in `items` is also in `queue`
-	items map[string]interface{}
-	queue []string
+	items map[string]interface{} // map存储 对象键 和 对象，方便查找
+	queue []string               // 队列存储对象键值、
 
 	// populated is true if the first batch of items inserted by Replace() has been populated
 	// or Delete/Add/Update was called first.
@@ -155,6 +156,7 @@ func (f *FIFO) HasSynced() bool {
 // Add inserts an item, and puts it in the queue. The item is only enqueued
 // if it doesn't already exist in the set.
 func (f *FIFO) Add(obj interface{}) error {
+	// 计算对象的key
 	id, err := f.keyFunc(obj)
 	if err != nil {
 		return KeyError{obj, err}
@@ -166,6 +168,7 @@ func (f *FIFO) Add(obj interface{}) error {
 		f.queue = append(f.queue, id)
 	}
 	f.items[id] = obj
+	// 唤醒携程
 	f.cond.Broadcast()
 	return nil
 }
@@ -276,6 +279,9 @@ func (f *FIFO) IsClosed() bool {
 // so if you don't successfully process it, it should be added back with
 // AddIfNotPresent(). process function is called under lock, so it is safe
 // update data structures in it that need to be in sync with the queue.
+// pop 对应的对象，并使用回调来处理，
+// 注意process如果返回ErrRequeue，还是会返回队列
+// 注意从对头取出
 func (f *FIFO) Pop(process PopProcessFunc) (interface{}, error) {
 	f.lock.Lock()
 	defer f.lock.Unlock()
@@ -345,6 +351,7 @@ func (f *FIFO) Replace(list []interface{}, resourceVersion string) error {
 
 // Resync will ensure that every object in the Store has its key in the queue.
 // This should be a no-op, because that property is maintained by all operations.
+// Resync 重新同步对象键 同步的是 item中的对象键
 func (f *FIFO) Resync() error {
 	f.lock.Lock()
 	defer f.lock.Unlock()
@@ -372,6 +379,7 @@ func NewFIFO(keyFunc KeyFunc) *FIFO {
 		queue:   []string{},
 		keyFunc: keyFunc,
 	}
+	// 用f.lock来喂给条件变量
 	f.cond.L = &f.lock
 	return f
 }

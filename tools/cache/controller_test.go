@@ -23,15 +23,16 @@ import (
 	"testing"
 	"time"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
 	fcache "k8s.io/client-go/tools/cache/testing"
+	"k8s.io/klog"
 
-	"github.com/google/gofuzz"
+	fuzz "github.com/google/gofuzz"
 )
 
 func Example() {
@@ -44,15 +45,18 @@ func Example() {
 	// This will hold incoming changes. Note how we pass downstream in as a
 	// KeyLister, that way resync operations will result in the correct set
 	// of update/delete deltas.
+	// 创建更新delta队列
 	fifo := NewDeltaFIFO(MetaNamespaceKeyFunc, downstream)
 
 	// Let's do threadsafe output to get predictable test results.
 	deletionCounter := make(chan string, 1000)
 
 	cfg := &Config{
-		Queue:            fifo,
-		ListerWatcher:    source,
-		ObjectType:       &v1.Pod{},
+		Queue:         fifo,
+		ListerWatcher: source,
+		// pod类型
+		ObjectType: &v1.Pod{},
+		// 100毫秒重全部重新更新一下资源对象的信息
 		FullResyncPeriod: time.Millisecond * 100,
 		RetryOnError:     false,
 
@@ -64,12 +68,13 @@ func Example() {
 
 			if newest.Type != Deleted {
 				// Update our downstream store.
+				//  更新到下游更新的操作
 				err := downstream.Add(newest.Object)
 				if err != nil {
 					return err
 				}
 
-				// Delete this object.
+				// 从源中删除该事件
 				source.Delete(newest.Object.(runtime.Object))
 			} else {
 				// Update our downstream store.
@@ -95,13 +100,16 @@ func Example() {
 	// Create the controller and run it until we close stop.
 	stop := make(chan struct{})
 	defer close(stop)
+	// 启动该控制器
 	go New(cfg).Run(stop)
 
 	// Let's add a few objects to the source.
+	// 添加一系列的对象资源
 	testIDs := []string{"a-hello", "b-controller", "c-framework"}
 	for _, name := range testIDs {
 		// Note that these pods are not valid-- the fake source doesn't
 		// call validation or anything.
+		// 上游有更新
 		source.Add(&v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name}})
 	}
 
@@ -112,6 +120,7 @@ func Example() {
 	}
 
 	for _, key := range outputSet.List() {
+		klog.V(0).Info(key)
 		fmt.Println(key)
 	}
 	// Output:

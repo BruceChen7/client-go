@@ -32,6 +32,9 @@ import (
 // 2. a name of an index, and
 // 3. an "indexed value", which is produced by an IndexFunc and
 //    can be a field value or any other string computed from the object.
+// 从字面上看是索引器，他所在的位置就是Informer的LocalStore
+// indexer是一种可以使用不同索引函数为对象进行索引的存储介质，作为sharedInformer的存储。
+// cache是一种indexer的实现，主要功能有两个：
 type Indexer interface {
 	// 组合Store接口，在store存储的基础上，扩展了对象查找的能力
 	Store

@@ -163,12 +163,14 @@ type DeltaFIFO struct {
 	// We depend on the property that items in the set are in
 	// the queue and vice versa, and that all Deltas in this
 	// map have at least one Delta.
+	// key是对象键  value是对象事件 对象
 	items map[string]Deltas
-	queue []string
+	queue []string // 对象键的对象
 
 	// populated is true if the first batch of items inserted by Replace() has been populated
 	// or Delete/Add/Update was called first.
 	populated bool
+	// 首次插入对象的数目
 	// initialPopulationCount is the number of items inserted by the first call of Replace()
 	initialPopulationCount int
 
@@ -212,11 +214,16 @@ func (f *DeltaFIFO) Close() {
 
 // KeyOf exposes f's keyFunc, but also detects the key of a Deltas object or
 // DeletedFinalStateUnknown objects.
+// DeltaFIFO的计算对象键的方式为什么要先做一次Deltas的类型转换呢？
+// 原因很简单，那就是从DeltaFIFO.Pop()出去的对象很可能还要再添加进来(比如处理失败需要再放进来)，
+// 此时添加的对象就是已经封装好的Deltas
 func (f *DeltaFIFO) KeyOf(obj interface{}) (string, error) {
+	// obj是事件数组
 	if d, ok := obj.(Deltas); ok {
 		if len(d) == 0 {
 			return "", KeyError{obj, ErrZeroLengthDeltasObject}
 		}
+		// 选择最新的对象来作为obj来计算key
 		obj = d.Newest().Object
 	}
 	if d, ok := obj.(DeletedFinalStateUnknown); ok {
@@ -230,6 +237,8 @@ func (f *DeltaFIFO) KeyOf(obj interface{}) (string, error) {
 func (f *DeltaFIFO) HasSynced() bool {
 	f.lock.Lock()
 	defer f.lock.Unlock()
+	// // 这里就比较明白了，一次同步全量对象后，并且全部Pop()出去才能算是同步完成
+	// 其实这里所谓的同步就是全量内容已经进入Indexer，Indexer已经是系统中对象的全量快照了
 	return f.populated && f.initialPopulationCount == 0
 }
 
@@ -262,7 +271,7 @@ func (f *DeltaFIFO) Delete(obj interface{}) error {
 	}
 	f.lock.Lock()
 	defer f.lock.Unlock()
-	f.populated = true
+	f.populated = true // 队列第一次写入操作都要设置标记
 	if f.knownObjects == nil {
 		if _, exists := f.items[id]; !exists {
 			// Presumably, this was deleted when a relist happened.
@@ -276,6 +285,7 @@ func (f *DeltaFIFO) Delete(obj interface{}) error {
 		// because it will be deduped automatically in "queueActionLocked"
 		_, exists, err := f.knownObjects.GetByKey(id)
 		_, itemsExist := f.items[id]
+		// 自己和Indexer里面有任何一个有这个对象都算存在
 		if err == nil && !exists && !itemsExist {
 			// Presumably, this was deleted when a relist happened.
 			// Don't provide a second report of the same deletion.
@@ -332,6 +342,7 @@ func dedupDeltas(deltas Deltas) Deltas {
 	}
 	a := &deltas[n-1]
 	b := &deltas[n-2]
+	// 判断如果是重复的，那就删除这两个delta把合并后的追加到Deltas数组尾部
 	if out := isDup(a, b); out != nil {
 		d := append(Deltas{}, deltas[:n-2]...)
 		return append(d, *out)
@@ -343,6 +354,8 @@ func dedupDeltas(deltas Deltas) Deltas {
 // Otherwise, returns nil.
 // TODO: is there anything other than deletions that need deduping?
 func isDup(a, b *Delta) *Delta {
+	// DeltaFIFO生产者和消费者是异步的，如果同一个目标的频繁操作，前面操作还缓存在队列中的时候，
+	// 那么队列就要缓冲对象的所有操作，那可以将多个操作合并么
 	if out := isDeletionDup(a, b); out != nil {
 		return out
 	}
@@ -364,20 +377,26 @@ func isDeletionDup(a, b *Delta) *Delta {
 
 // queueActionLocked appends to the delta list for the object.
 // Caller must lock first.
+//
+// 从函数名称来看把“动作”放入队列中，这个动作就是DeltaType，而且已经加锁了
 func (f *DeltaFIFO) queueActionLocked(actionType DeltaType, obj interface{}) error {
+	// 生成key
 	id, err := f.KeyOf(obj)
 	if err != nil {
 		return KeyError{obj, err}
 	}
 
 	newDeltas := append(f.items[id], Delta{actionType, obj})
+	// 重新组织事件，相同的合并放到一起
 	newDeltas = dedupDeltas(newDeltas)
 
 	if len(newDeltas) > 0 {
+		// 如果对象没有存在过，那就放入队列中，如果存在说明已经在queue中了，也就没必要再添加了
 		if _, exists := f.items[id]; !exists {
 			f.queue = append(f.queue, id)
 		}
 		f.items[id] = newDeltas
+		// 通知所有调用pop的go routinue
 		f.cond.Broadcast()
 	} else {
 		// This never happens, because dedupDeltas never returns an empty list
@@ -475,10 +494,12 @@ func (f *DeltaFIFO) Pop(process PopProcessFunc) (interface{}, error) {
 			if f.IsClosed() {
 				return nil, ErrFIFOClosed
 			}
-
+			// d等待非空
 			f.cond.Wait()
 		}
+		// 获取第一个key
 		id := f.queue[0]
+		// 更新key
 		f.queue = f.queue[1:]
 		if f.initialPopulationCount > 0 {
 			f.initialPopulationCount--
@@ -526,12 +547,14 @@ func (f *DeltaFIFO) Replace(list []interface{}, resourceVersion string) error {
 		if err != nil {
 			return KeyError{item, err}
 		}
+		// 记录处理过的目标键，采用set存储，是为了后续快速查找
 		keys.Insert(key)
 		if err := f.queueActionLocked(action, item); err != nil {
 			return fmt.Errorf("couldn't enqueue object: %v", err)
 		}
 	}
 
+	// 如果indexer 没有存储的话，自己存储的就是所有的老对象，目的要看看那些老对象不在全量集合中，那么就是删除的对象了
 	if f.knownObjects == nil {
 		// Do deletion detection against our own list.
 		queuedDeletions := 0
@@ -539,16 +562,19 @@ func (f *DeltaFIFO) Replace(list []interface{}, resourceVersion string) error {
 			if keys.Has(k) {
 				continue
 			}
+			// 输入对象中没有，说明对象已经被删除了。
 			var deletedObj interface{}
 			if n := oldItem.Newest(); n != nil {
 				deletedObj = n.Object
 			}
 			queuedDeletions++
+			// 终于看到哪里用到DeletedFinalStateUnknown了，队列中存储对象的Deltas数组中
+			// 可能已经存在Delete了，避免重复，采用DeletedFinalStateUnknown这种类型
 			if err := f.queueActionLocked(Deleted, DeletedFinalStateUnknown{k, deletedObj}); err != nil {
 				return err
 			}
 		}
-
+		// 如果populated还没有设置，说明是第一次并且还没有任何修改操作执行过
 		if !f.populated {
 			f.populated = true
 			// While there shouldn't be any queued deletions in the initial
@@ -592,6 +618,8 @@ func (f *DeltaFIFO) Replace(list []interface{}, resourceVersion string) error {
 // Resync adds, with a Sync type of Delta, every object listed by
 // `f.knownObjects` whose key is not already queued for processing.
 // If `f.knownObjects` is `nil` then Resync does nothing.
+// 使用knownObjects中的对象重新加入到队列中，类型为sync
+// 一般在设置的了ResyncPeriod不为0的时候定时执行
 func (f *DeltaFIFO) Resync() error {
 	f.lock.Lock()
 	defer f.lock.Unlock()

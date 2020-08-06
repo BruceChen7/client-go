@@ -132,6 +132,8 @@ type SharedInformer interface {
 	// AddEventHandler adds an event handler to the shared informer using the shared informer's resync
 	// period.  Events to a single handler are delivered sequentially, but there is no coordination
 	// between different handlers.
+	// 添加资源时间处理器，注册回调函数
+	// 为什么是Add不是Reg，说明可以支持多个handler
 	AddEventHandler(handler ResourceEventHandler)
 	// AddEventHandlerWithResyncPeriod adds an event handler to the
 	// shared informer with the requested resync period; zero means
@@ -147,8 +149,10 @@ type SharedInformer interface {
 	// between any two resyncs may be longer than the nominal period
 	// because the implementation takes time to do work and there may
 	// be competing load and scheduling noise.
+	// 添加
 	AddEventHandlerWithResyncPeriod(handler ResourceEventHandler, resyncPeriod time.Duration)
 	// GetStore returns the informer's local cache as a Store.
+	//  这个函数就是获取Store的接口,说明SharedInformer内有Store对象
 	GetStore() Store
 	// GetController is deprecated, it does nothing useful
 	GetController() Controller
@@ -158,6 +162,10 @@ type SharedInformer interface {
 	// HasSynced returns true if the shared informer's store has been
 	// informed by at least one full LIST of the authoritative state
 	// of the informer's object collection.  This is unrelated to "resync".
+
+	/// 因为有Store，这个函数就是告知使用者Store里面是否已经同步了apiserver的资源，这个接口很有用
+	// 当创建完SharedInformer后，通过Reflector从apiserver同步全量对象，然后在通过DeltaFIFO一个一个的同志到cache
+	// 这个接口就是告知使用者，全量的对象是不是已经同步到了cache，这样就可以从cache列举或者查询了
 	HasSynced() bool
 	// LastSyncResourceVersion is the resource version observed when last synced with the underlying
 	// store. The value returned is not synchronized with access to the underlying store and is not
@@ -280,6 +288,7 @@ type sharedIndexInformer struct {
 	// expected to handle.  Only the type needs to be right, except
 	// that when that is `unstructured.Unstructured` the object's
 	// `"apiVersion"` and `"kind"` must also be right.
+	// informer期待处理的对象
 	objectType runtime.Object
 
 	// resyncCheckPeriod is how often we want the reflector's resync timer to fire so it can call
@@ -335,7 +344,7 @@ type deleteNotification struct {
 
 func (s *sharedIndexInformer) Run(stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
-
+	// 钩爪deltaFIFO
 	fifo := NewDeltaFIFOWithOptions(DeltaFIFOOptions{
 		KnownObjects:          s.indexer,
 		EmitDeltaTypeReplaced: true,
@@ -348,7 +357,7 @@ func (s *sharedIndexInformer) Run(stopCh <-chan struct{}) {
 		FullResyncPeriod: s.resyncCheckPeriod,
 		RetryOnError:     false,
 		ShouldResync:     s.processor.shouldResync,
-
+		//  这个是重点，Controller调用DeltaFIFO.Pop()接口传入的就是这个回调函数
 		Process: s.HandleDeltas,
 	}
 
@@ -374,6 +383,9 @@ func (s *sharedIndexInformer) Run(stopCh <-chan struct{}) {
 		defer s.startedLock.Unlock()
 		s.stopped = true // Don't want any new listeners
 	}()
+
+	// 启动Controller，Controller一旦运行，整个流程就开始启动了。
+	// 毕竟Controller是SharedInformer的发动机
 	s.controller.Run(stopCh)
 }
 
@@ -501,6 +513,7 @@ func (s *sharedIndexInformer) HandleDeltas(obj interface{}) error {
 		case Sync, Replaced, Added, Updated:
 			s.cacheMutationDetector.AddObject(d.Object)
 			if old, exists, err := s.indexer.Get(d.Object); err == nil && exists {
+				// 直接更新本地存储的对象
 				if err := s.indexer.Update(d.Object); err != nil {
 					return err
 				}
@@ -519,6 +532,7 @@ func (s *sharedIndexInformer) HandleDeltas(obj interface{}) error {
 						}
 					}
 				}
+				// 更新通知的分发
 				s.processor.distribute(updateNotification{oldObj: old, newObj: d.Object}, isSync)
 			} else {
 				if err := s.indexer.Add(d.Object); err != nil {
@@ -527,6 +541,7 @@ func (s *sharedIndexInformer) HandleDeltas(obj interface{}) error {
 				s.processor.distribute(addNotification{newObj: d.Object}, false)
 			}
 		case Deleted:
+			// 删除本地资源对象的事件
 			if err := s.indexer.Delete(d.Object); err != nil {
 				return err
 			}
@@ -568,6 +583,7 @@ func (p *sharedProcessor) addListenerLocked(listener *processorListener) {
 }
 
 func (p *sharedProcessor) distribute(obj interface{}, sync bool) {
+	// 获取读锁
 	p.listenersLock.RLock()
 	defer p.listenersLock.RUnlock()
 
@@ -577,6 +593,7 @@ func (p *sharedProcessor) distribute(obj interface{}, sync bool) {
 		}
 	} else {
 		for _, listener := range p.listeners {
+			// 对每个监听器都通知
 			listener.add(obj)
 		}
 	}
@@ -644,10 +661,12 @@ func (p *sharedProcessor) resyncCheckPeriodChanged(resyncCheckPeriod time.Durati
 //
 // processorListener also keeps track of the adjusted requested resync
 // period of the listener.
+// 同步从sharedProcessor的通知到ResourceEventHandler
 type processorListener struct {
 	nextCh chan interface{}
 	addCh  chan interface{}
 
+	// 资源事件的回调
 	handler ResourceEventHandler
 
 	// pendingNotifications is an unbounded ring buffer that holds all notifications not yet distributed.
@@ -735,10 +754,13 @@ func (p *processorListener) run() {
 	// the next notification will be attempted.  This is usually better than the alternative of never
 	// delivering again.
 	stopCh := make(chan struct{})
+
+	// until loops until stop channel is closed, running f every period.
 	wait.Until(func() {
 		for next := range p.nextCh {
 			switch notification := next.(type) {
 			case updateNotification:
+				// 调用资源事件的回调
 				p.handler.OnUpdate(notification.oldObj, notification.newObj)
 			case addNotification:
 				p.handler.OnAdd(notification.newObj)

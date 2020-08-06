@@ -107,6 +107,7 @@ type Controller interface {
 }
 
 // New makes a new Controller from the given Config.
+// 根据配置来创建controller
 func New(c *Config) Controller {
 	ctlr := &controller{
 		config: *c,
@@ -122,8 +123,10 @@ func (c *controller) Run(stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
 	go func() {
 		<-stopCh
+		// 关闭delta队列
 		c.config.Queue.Close()
 	}()
+	// 创建reflector
 	r := NewReflector(
 		c.config.ListerWatcher,
 		c.config.ObjectType,
@@ -147,6 +150,7 @@ func (c *controller) Run(stopCh <-chan struct{}) {
 
 // Returns true once this controller has completed an initial resource listing
 func (c *controller) HasSynced() bool {
+	// 查看delta queue是否都已经同步了
 	return c.config.Queue.HasSynced()
 }
 
@@ -170,6 +174,8 @@ func (c *controller) LastSyncResourceVersion() string {
 // also be helpful.
 func (c *controller) processLoop() {
 	for {
+		// Queue如果为空，那么会阻塞，所以前面是for
+		// c.config.Process是用来处理每个事件的回调
 		obj, err := c.config.Queue.Pop(PopProcessFunc(c.config.Process))
 		if err != nil {
 			if err == ErrFIFOClosed {
