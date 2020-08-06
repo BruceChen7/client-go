@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -38,21 +38,29 @@ import (
 var nevererrc chan error
 
 type testLW struct {
-	ListFunc  func(options metav1.ListOptions) (runtime.Object, error)
+	// list函数指针
+	ListFunc func(options metav1.ListOptions) (runtime.Object, error)
+	// watch函数指针
 	WatchFunc func(options metav1.ListOptions) (watch.Interface, error)
 }
 
+// 实现List接口
 func (t *testLW) List(options metav1.ListOptions) (runtime.Object, error) {
 	return t.ListFunc(options)
 }
+
+// 实现watch接口
 func (t *testLW) Watch(options metav1.ListOptions) (watch.Interface, error) {
 	return t.WatchFunc(options)
 }
 
 func TestCloseWatchChannelOnError(t *testing.T) {
+	// 创建一个反射器
 	r := NewReflector(&testLW{}, &v1.Pod{}, NewStore(MetaNamespaceKeyFunc), 0)
 	pod := &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "bar"}}
+	// 创建一个监听管道
 	fw := watch.NewFake()
+	// 初始化reflector的list and watch
 	r.listerWatcher = &testLW{
 		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
 			return fw, nil
@@ -61,7 +69,9 @@ func TestCloseWatchChannelOnError(t *testing.T) {
 			return &v1.PodList{ListMeta: metav1.ListMeta{ResourceVersion: "1"}}, nil
 		},
 	}
+	// 执行list and  wartch
 	go r.ListAndWatch(wait.NeverStop)
+	// 给监听管道发送Error事件
 	fw.Error(pod)
 	select {
 	case _, ok := <-fw.ResultChan():

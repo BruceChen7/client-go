@@ -32,6 +32,7 @@ const defaultPageSize = 500
 const defaultPageBufferSize = 10
 
 // ListPageFunc returns a list object for the given list options.
+// 返回
 type ListPageFunc func(ctx context.Context, opts metav1.ListOptions) (runtime.Object, error)
 
 // SimplePageFunc adapts a context-less list function into one that accepts a context.

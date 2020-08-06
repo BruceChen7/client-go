@@ -48,6 +48,7 @@ const defaultExpectedTypeName = "<unspecified>"
 // 作用是向apiserver watch 指定的资源
 // Reflector watches a specified resource and causes all changes to be reflected in the given store.
 type Reflector struct {
+	// reflector监控信息
 	// name identifies this reflector. By default it will be a file:line if possible.
 	name string
 
@@ -60,19 +61,23 @@ type Reflector struct {
 	// Only the type needs to be right, except that when that is
 	// `unstructured.Unstructured` the object's `"apiVersion"` and
 	// `"kind"` must also be right.
+	// store中存放对象的类型
 	expectedType reflect.Type
+
 	// The GVK of the object we expect to place in the store if unstructured.
 	expectedGVK *schema.GroupVersionKind
+	// 存储介质，这里在sharedInformer里一般是DeltaFIFO
 	// The destination to sync up with the watch source
 	store Store
 	// listerWatcher is used to perform lists and watches.
+	// ListerWatcher接口，提供ListAndWatchAPI接口调用
 	listerWatcher ListerWatcher
 
 	// backoff manages backoff of ListWatch
 	backoffManager wait.BackoffManager
-
+	// 重新同步的间隔
 	resyncPeriod time.Duration
-	// ShouldResync is invoked periodically and whenever it returns `true` the Store's Resync operation is invoked
+	// ShouldResync is invoked periodically and whenever it returns `true` the Store's Resync operation is invoke
 	ShouldResync func() bool
 	// clock allows tests to manipulate time
 	clock clock.Clock
@@ -95,6 +100,8 @@ type Reflector struct {
 	// NOTE: It should be used carefully as paginated lists are always served directly from
 	// etcd, which is significantly less efficient and may lead to serious performance and
 	// scalability problems.
+	// 调用的Watch接口时的单页数量(chunk size)
+	// 现在通过分页机制，减轻k8s api server的请求压力
 	WatchListPageSize int64
 }
 
@@ -106,6 +113,7 @@ var (
 
 // NewNamespaceKeyedIndexerAndReflector creates an Indexer and a Reflector
 // The indexer is configured to key on namespace
+// 创建一个使用Namespace为key的indexer作为store的reflector，返回indexer和reflector
 func NewNamespaceKeyedIndexerAndReflector(lw ListerWatcher, expectedType interface{}, resyncPeriod time.Duration) (indexer Indexer, reflector *Reflector) {
 	indexer = NewIndexer(MetaNamespaceKeyFunc, Indexers{NamespaceIndex: MetaNamespaceIndexFunc})
 	reflector = NewReflector(lw, expectedType, indexer, resyncPeriod)
@@ -127,6 +135,7 @@ func NewReflector(lw ListerWatcher, expectedType interface{}, store Store, resyn
 }
 
 // NewNamedReflector same as NewReflector, but with a specified name for logging
+// expectedType为期待的资源类型
 func NewNamedReflector(name string, lw ListerWatcher, expectedType interface{}, store Store, resyncPeriod time.Duration) *Reflector {
 	realClock := &clock.RealClock{}
 	r := &Reflector{
@@ -224,6 +233,7 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 		var err error
 		listCh := make(chan struct{}, 1)
 		panicCh := make(chan interface{}, 1)
+		// 启动的时候调用list的逻辑，拉一次全部的资源列表
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -232,7 +242,9 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 			}()
 			// Attempt to gather list in chunks, if supported by listerWatcher, if not, the first
 			// list request will return the full response.
+			// 创建一个pager
 			pager := pager.New(pager.SimplePageFunc(func(opts metav1.ListOptions) (runtime.Object, error) {
+				// 直接返回对api server的分页结果
 				return r.listerWatcher.List(opts)
 			}))
 			switch {
@@ -257,7 +269,7 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 				// we don't introduce regression.
 				pager.PageSize = 0
 			}
-
+			// 获取最新的资源
 			list, paginatedResult, err = pager.List(context.Background(), options)
 			if isExpiredError(err) || isTooLargeResourceVersionError(err) {
 				r.setIsLastSyncResourceVersionUnavailable(true)
@@ -267,6 +279,7 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 				// resource version it is listing at is expired or the cache may not yet be synced to the provided
 				// resource version. So we need to fallback to resourceVersion="" in all to recover and ensure
 				// the reflector makes forward progress.
+				// 真正的对结果执行分页
 				list, paginatedResult, err = pager.List(context.Background(), metav1.ListOptions{ResourceVersion: r.relistResourceVersion()})
 			}
 			close(listCh)
@@ -293,15 +306,17 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 		// cache is disabled and there are a lot of objects of a given type. In such case,
 		// there is no need to prefer listing from watch cache.
 		if options.ResourceVersion == "0" && paginatedResult {
+			// 设置是否是分页的结果
 			r.paginatedResult = true
 		}
-
+		// list is success
 		r.setIsLastSyncResourceVersionUnavailable(false) // list was successful
 		initTrace.Step("Objects listed")
 		listMetaInterface, err := meta.ListAccessor(list)
 		if err != nil {
 			return fmt.Errorf("%s: Unable to understand list result %#v: %v", r.name, list, err)
 		}
+		// 获取资源信息
 		resourceVersion = listMetaInterface.GetResourceVersion()
 		initTrace.Step("Resource version extracted")
 		// 提取items
@@ -310,6 +325,7 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 			return fmt.Errorf("%s: Unable to understand list result %#v (%v)", r.name, list, err)
 		}
 		initTrace.Step("Objects extracted")
+		// list完成，同步到本地的存储
 		if err := r.syncWith(items, resourceVersion); err != nil {
 			return fmt.Errorf("%s: Unable to sync list result: %v", r.name, err)
 		}
@@ -323,15 +339,15 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 
 	resyncerrc := make(chan error, 1)
 	cancelCh := make(chan struct{})
-	defer close(cancelCh)
-	// 创建协程
 	go func() {
+		// resynCh是一个time.Time的channel
 		resyncCh, cleanup := r.resyncChan()
 		defer func() {
 			cleanup() // Call the last one written into cleanup
 		}()
 		for {
 			select {
+			// 到时间了，直接返回
 			case <-resyncCh:
 			case <-stopCh:
 				return
@@ -358,7 +374,7 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 			return nil
 		default:
 		}
-
+		//  随机一个超时时间
 		timeoutSeconds := int64(minWatchTimeout.Seconds() * (rand.Float64() + 1.0))
 		options = metav1.ListOptions{
 			ResourceVersion: resourceVersion,
@@ -394,6 +410,7 @@ func (r *Reflector) ListAndWatch(stopCh <-chan struct{}) error {
 			// watch where we ended.
 			// If that's the case wait and resend watch request.
 			if utilnet.IsConnectionRefused(err) {
+				// 重试
 				time.Sleep(time.Second)
 				continue
 			}
@@ -439,9 +456,11 @@ loop:
 	for {
 		select {
 		case <-stopCh:
+			// stop error
 			return errorStopRequested
 		case err := <-errc:
 			return err
+		// 获取事件
 		case event, ok := <-w.ResultChan():
 			if !ok {
 				break loop
@@ -466,18 +485,22 @@ loop:
 				utilruntime.HandleError(fmt.Errorf("%s: unable to understand watch event %#v", r.name, event))
 				continue
 			}
+			// 获取资源版本
 			newResourceVersion := meta.GetResourceVersion()
 			switch event.Type {
+			// 添加对应的资源对象
 			case watch.Added:
 				err := r.store.Add(event.Object)
 				if err != nil {
 					utilruntime.HandleError(fmt.Errorf("%s: unable to add watch event object (%#v) to store: %v", r.name, event.Object, err))
 				}
+			// 更新对应的资源对象
 			case watch.Modified:
 				err := r.store.Update(event.Object)
 				if err != nil {
 					utilruntime.HandleError(fmt.Errorf("%s: unable to update watch event object (%#v) to store: %v", r.name, event.Object, err))
 				}
+			// 删除对应的资源对象
 			case watch.Deleted:
 				// TODO: Will any consumers need access to the "last known
 				// state", which is passed in event.Object? If so, may need
