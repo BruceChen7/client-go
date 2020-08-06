@@ -89,6 +89,7 @@ type controller struct {
 
 // Controller is a low-level controller that is parameterized by a
 // Config and used in sharedIndexInformer.
+// 定义一个controlller, 把多个业务模块整合到一套逻辑里面
 type Controller interface {
 	// Run does two things.  One is to construct and run a Reflector
 	// to pump objects/notifications from the Config's ListerWatcher
@@ -143,6 +144,7 @@ func (c *controller) Run(stopCh <-chan struct{}) {
 	var wg wait.Group
 	defer wg.Wait()
 
+	// 开启一个协程用来list watch资源的变化
 	wg.StartWithChannel(stopCh, r.Run)
 
 	wait.Until(c.processLoop, time.Second, stopCh)
@@ -176,6 +178,8 @@ func (c *controller) processLoop() {
 	for {
 		// Queue如果为空，那么会阻塞，所以前面是for
 		// c.config.Process是用来处理每个事件的回调
+		// 这里的Queue一般是DeltaQueue
+		// 处理的的Process一般是ShareInformer传过来的，
 		obj, err := c.config.Queue.Pop(PopProcessFunc(c.config.Process))
 		if err != nil {
 			if err == ErrFIFOClosed {

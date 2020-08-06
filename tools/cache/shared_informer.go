@@ -31,6 +31,7 @@ import (
 	"k8s.io/klog"
 )
 
+// 不难看出Shared指的是多个listeners共享同一个cache，而且资源的变化会同时通知到cache和listeners
 // SharedInformer provides eventually consistent linkage of its
 // clients to the authoritative state of a given collection of
 // objects.  An object is identified by its API group, kind/resource,
@@ -200,6 +201,7 @@ func NewSharedInformer(lw ListerWatcher, exampleObject runtime.Object, defaultEv
 // `minimumResyncPeriod` defined in this file.
 func NewSharedIndexInformer(lw ListerWatcher, exampleObject runtime.Object, defaultEventHandlerResyncPeriod time.Duration, indexers Indexers) SharedIndexInformer {
 	realClock := &clock.RealClock{}
+	// c创建一个sharedINfo
 	sharedIndexInformer := &sharedIndexInformer{
 		processor:                       &sharedProcessor{clock: realClock},
 		indexer:                         NewIndexer(DeletionHandlingMetaNamespaceKeyFunc, indexers),
@@ -276,12 +278,16 @@ func WaitForCacheSync(stopCh <-chan struct{}, cacheSyncs ...InformerSynced) bool
 // sharedProcessor, which is responsible for relaying those
 // notifications to each of the informer's clients.
 type sharedIndexInformer struct {
+	// Indexer也是一种Store，这个我们知道的，Controller负责把Reflector和FIFO逻辑串联起来
+	// 所以这两个变量就涵盖了开篇那张图Reflector、DeltaFIFO和LocalStore(cache)
 	indexer    Indexer
 	controller Controller
 
+	// sharedIndexInformer把ResourceEventHandler进行了在层封装，并统一由sharedProcessor管理
 	processor             *sharedProcessor
 	cacheMutationDetector MutationDetector
 
+	// 这两个变量是给Reflector用的 Reflector是在Controller创建的
 	listerWatcher ListerWatcher
 
 	// objectType is an example object of the type this informer is
@@ -293,6 +299,8 @@ type sharedIndexInformer struct {
 
 	// resyncCheckPeriod is how often we want the reflector's resync timer to fire so it can call
 	// shouldResync to check if any of our listeners need a resync.
+	// 定期同步的周期，因为可能存在多个ResourceEventHandler，就有可能存在多个同步周期，sharedIndexInformer采用最小的周期
+
 	resyncCheckPeriod time.Duration
 	// defaultEventHandlerResyncPeriod is the default resync period for any handlers added via
 	// AddEventHandler (i.e. they don't specify one and just want to use the shared informer's default
@@ -344,7 +352,7 @@ type deleteNotification struct {
 
 func (s *sharedIndexInformer) Run(stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
-	// 钩爪deltaFIFO
+	// 构造deltaFIFO
 	fifo := NewDeltaFIFOWithOptions(DeltaFIFOOptions{
 		KnownObjects:          s.indexer,
 		EmitDeltaTypeReplaced: true,
@@ -375,7 +383,9 @@ func (s *sharedIndexInformer) Run(stopCh <-chan struct{}) {
 	var wg wait.Group
 	defer wg.Wait()              // Wait for Processor to stop
 	defer close(processorStopCh) // Tell Processor to stop
+	// 在开启一个协程来处理冲突检测
 	wg.StartWithChannel(processorStopCh, s.cacheMutationDetector.Run)
+	// 开启一个协程来处理从delta 增量事件的通知
 	wg.StartWithChannel(processorStopCh, s.processor.run)
 
 	defer func() {
@@ -385,7 +395,13 @@ func (s *sharedIndexInformer) Run(stopCh <-chan struct{}) {
 	}()
 
 	// 启动Controller，Controller一旦运行，整个流程就开始启动了。
-	// 毕竟Controller是SharedInformer的发动机
+	// 这里controller主要是创建reflector，
+	// reflect启动对资源的list and wartch
+	// 将变化事件转移到delta fifo中
+	// hController通过DeltaFIFO.Pop()函数弹出Deltas,
+	// 并调处理函数SharedIndexInformer.HandleDeltas()
+	// 这个函数是衔接Controller和sharedProcess的关键点
+	// 他把Deltas转换为sharedProcess需要的各种Notification类型
 	s.controller.Run(stopCh)
 }
 
@@ -457,12 +473,14 @@ func (s *sharedIndexInformer) AddEventHandlerWithResyncPeriod(handler ResourceEv
 	s.startedLock.Lock()
 	defer s.startedLock.Unlock()
 
+	// 已经关闭，不在添加任何的handler
 	if s.stopped {
 		klog.V(2).Infof("Handler %v was not added to shared informer because it has stopped already", handler)
 		return
 	}
 
 	if resyncPeriod > 0 {
+		// 最最小的同步周期
 		if resyncPeriod < minimumResyncPeriod {
 			klog.Warningf("resyncPeriod %d is too small. Changing it to the minimum allowed value of %d", resyncPeriod, minimumResyncPeriod)
 			resyncPeriod = minimumResyncPeriod
@@ -514,6 +532,7 @@ func (s *sharedIndexInformer) HandleDeltas(obj interface{}) error {
 			s.cacheMutationDetector.AddObject(d.Object)
 			if old, exists, err := s.indexer.Get(d.Object); err == nil && exists {
 				// 直接更新本地存储的对象
+				// 这里和index联动起来
 				if err := s.indexer.Update(d.Object); err != nil {
 					return err
 				}
@@ -535,6 +554,7 @@ func (s *sharedIndexInformer) HandleDeltas(obj interface{}) error {
 				// 更新通知的分发
 				s.processor.distribute(updateNotification{oldObj: old, newObj: d.Object}, isSync)
 			} else {
+				// 本地存储添加该增量事件对象
 				if err := s.indexer.Add(d.Object); err != nil {
 					return err
 				}
@@ -573,6 +593,7 @@ func (p *sharedProcessor) addListener(listener *processorListener) {
 	p.addListenerLocked(listener)
 	if p.listenersStarted {
 		p.wg.Start(listener.run)
+		// 同时启用两个协程listener的来处理delta事件
 		p.wg.Start(listener.pop)
 	}
 }
@@ -604,7 +625,9 @@ func (p *sharedProcessor) run(stopCh <-chan struct{}) {
 		p.listenersLock.RLock()
 		defer p.listenersLock.RUnlock()
 		for _, listener := range p.listeners {
+			// 对每个listener创建一个协程
 			p.wg.Start(listener.run)
+			// 创建
 			p.wg.Start(listener.pop)
 		}
 		p.listenersStarted = true
@@ -718,6 +741,7 @@ func (p *processorListener) add(notification interface{}) {
 	p.addCh <- notification
 }
 
+// 因为addCh是无缓冲chan，调用add()函数的是distribute
 func (p *processorListener) pop() {
 	defer utilruntime.HandleCrash()
 	defer close(p.nextCh) // Tell .run() to stop
@@ -733,6 +757,7 @@ func (p *processorListener) pop() {
 			if !ok { // Nothing to pop
 				nextCh = nil // Disable this select case
 			}
+			// 读出一个添加的事件
 		case notificationToAdd, ok := <-p.addCh:
 			if !ok {
 				return
@@ -740,6 +765,7 @@ func (p *processorListener) pop() {
 			if notification == nil { // No notification to pop (and pendingNotifications is empty)
 				// Optimize the case - skip adding to pendingNotifications
 				notification = notificationToAdd
+
 				nextCh = p.nextCh
 			} else { // There is already a notification waiting to be dispatched
 				p.pendingNotifications.WriteOne(notificationToAdd)
@@ -761,6 +787,7 @@ func (p *processorListener) run() {
 			switch notification := next.(type) {
 			case updateNotification:
 				// 调用资源事件的回调
+				// 这时用户侧的回调
 				p.handler.OnUpdate(notification.oldObj, notification.newObj)
 			case addNotification:
 				p.handler.OnAdd(notification.newObj)
