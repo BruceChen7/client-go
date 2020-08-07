@@ -32,10 +32,12 @@ func doTestStore(t *testing.T, store Store) {
 	if item, ok, _ := store.Get(mkObj("foo", "")); !ok {
 		t.Errorf("didn't find inserted item")
 	} else {
+		// 对应的对象为bar
 		if e, a := "bar", item.(testStoreObject).val; e != a {
 			t.Errorf("expected %v, got %v", e, a)
 		}
 	}
+	// 更新foo的对象键的值为baz
 	store.Update(mkObj("foo", "baz"))
 	if item, ok, _ := store.Get(mkObj("foo", "")); !ok {
 		t.Errorf("didn't find inserted item")
@@ -44,6 +46,7 @@ func doTestStore(t *testing.T, store Store) {
 			t.Errorf("expected %v, got %v", e, a)
 		}
 	}
+	// 删除该foo对象键的value
 	store.Delete(mkObj("foo", ""))
 	if _, ok, _ := store.Get(mkObj("foo", "")); ok {
 		t.Errorf("found deleted item??")
@@ -67,6 +70,7 @@ func doTestStore(t *testing.T, store Store) {
 	}
 
 	// Test Replace.
+	// 用新的对象列表替换所有存储中的key
 	store.Replace([]interface{}{
 		mkObj("foo", "foo"),
 		mkObj("bar", "bar"),
@@ -88,6 +92,7 @@ func doTestStore(t *testing.T, store Store) {
 
 // Test public interface
 func doTestIndex(t *testing.T, indexer Indexer) {
+	// 创建对象
 	mkObj := func(id string, val string) testStoreObject {
 		return testStoreObject{id: id, val: val}
 	}
@@ -97,6 +102,8 @@ func doTestIndex(t *testing.T, indexer Indexer) {
 	expected["b"] = sets.NewString("a", "c")
 	expected["f"] = sets.NewString("e")
 	expected["h"] = sets.NewString("g")
+	// 存储中添加相应的对象, 这个indexer中的对象key是a, c, e,g 也就是是实现item中的key
+	// 存储种的索引key是b, f, h，其中索引key b对应的对象key，是a, c, 索引f，对应的是e
 	indexer.Add(mkObj("a", "b"))
 	indexer.Add(mkObj("c", "b"))
 	indexer.Add(mkObj("e", "f"))
@@ -104,6 +111,7 @@ func doTestIndex(t *testing.T, indexer Indexer) {
 	{
 		for k, v := range expected {
 			found := sets.String{}
+			// 获取存储对象的索引键
 			indexResults, err := indexer.Index("by_val", mkObj("", k))
 			if err != nil {
 				t.Errorf("Unexpected error %v", err)
@@ -119,14 +127,19 @@ func doTestIndex(t *testing.T, indexer Indexer) {
 	}
 }
 
+// 使用id作为对象key
 func testStoreKeyFunc(obj interface{}) (string, error) {
+	// 根据id作为key来进行存储
 	return obj.(testStoreObject).id, nil
 }
 
+// 索引键是存储对象的值
 func testStoreIndexFunc(obj interface{}) ([]string, error) {
+	// 通过val进行索引key
 	return []string{obj.(testStoreObject).val}, nil
 }
 
+// 创建索引函数，通过索引函数确定索引key
 func testStoreIndexers() Indexers {
 	indexers := Indexers{}
 	indexers["by_val"] = testStoreIndexFunc

@@ -142,12 +142,13 @@ type cache struct {
 	keyFunc KeyFunc
 }
 
+// 用来检查某个struct是否实现了Store所欲的接口
 var _ Store = &cache{}
 
 // Add inserts an item into the cache.
 // obj是一对象，可能是pod，endpoint对象之类的
 func (c *cache) Add(obj interface{}) error {
-	// 算出对象真正的索引
+	// 算出对象存储的对象键
 	key, err := c.keyFunc(obj)
 	if err != nil {
 		return KeyError{obj, err}
@@ -159,7 +160,7 @@ func (c *cache) Add(obj interface{}) error {
 
 // Update sets an item in the cache to its updated state.
 func (c *cache) Update(obj interface{}) error {
-	// 获取索引建
+	// 计算对象键
 	key, err := c.keyFunc(obj)
 	if err != nil {
 		return KeyError{obj, err}
@@ -261,7 +262,8 @@ func (c *cache) Resync() error {
 func NewStore(keyFunc KeyFunc) Store {
 	return &cache{
 		cacheStorage: NewThreadSafeStore(Indexers{}, Indices{}),
-		keyFunc:      keyFunc,
+		// 这个keyFunc，用来计算对象key
+		keyFunc: keyFunc,
 	}
 }
 
@@ -269,6 +271,7 @@ func NewStore(keyFunc KeyFunc) Store {
 func NewIndexer(keyFunc KeyFunc, indexers Indexers) Indexer {
 	return &cache{
 		cacheStorage: NewThreadSafeStore(indexers, Indices{}),
-		keyFunc:      keyFunc,
+		// 这个keyFunc，用来计算对象key
+		keyFunc: keyFunc,
 	}
 }

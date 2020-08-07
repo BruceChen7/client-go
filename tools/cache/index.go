@@ -62,7 +62,7 @@ type Indexer interface {
 }
 
 // IndexFunc knows how to compute the set of indexed values for an object.
-// 索引函数，输入一个对象，输出是该对象对应的索引链表
+// 索引函数，输入一个对象，输出是该对象对应的索引key链表
 type IndexFunc func(obj interface{}) ([]string, error)
 
 // IndexFuncToKeyFuncAdapter adapts an indexFunc to a keyFunc.  This is only useful if your index function returns
@@ -101,14 +101,16 @@ func MetaNamespaceIndexFunc(obj interface{}) ([]string, error) {
 
 // Index maps the indexed value to a set of keys in the store that match on that value
 // 这个是string是对象键，用于查找资源对象
-// Indexers： 索引函数名  ======>  索引函数  ======> 索引key值
-
+// Index key是索引key的值，value是一系列的对象key.
+// key是怎么计算出来的呢？ 根据IndexFunc来计算出来的，注意这个方法计算出来的是一个set.String
 type Index map[string]sets.String
 
 // Indexers maps a name to a IndexFunc
+// key是索引函数名
 type Indexers map[string]IndexFunc
 
 // Indices maps a name to an Index
 // 这个string是索引函数名
-// Indices： 索引函数名  ======> 对应多个索引key值 ======> 每个索引key值对应 不同的资源。(可能不同的索引key值对应相同的资源对象)
+// 而
+// Indices： key是索引函数名indexName
 type Indices map[string]Index // name to 多个索引键的映射

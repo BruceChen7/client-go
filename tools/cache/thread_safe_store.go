@@ -72,6 +72,7 @@ type threadSafeMap struct {
 	indices Indices
 }
 
+// 这个key是对象key
 func (c *threadSafeMap) Add(key string, obj interface{}) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
@@ -80,11 +81,13 @@ func (c *threadSafeMap) Add(key string, obj interface{}) {
 	c.updateIndices(oldObject, obj, key)
 }
 
+// 根据
 func (c *threadSafeMap) Update(key string, obj interface{}) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	oldObject := c.items[key]
 	c.items[key] = obj
+	// 更新索引
 	c.updateIndices(oldObject, obj, key)
 }
 
@@ -97,6 +100,7 @@ func (c *threadSafeMap) Delete(key string) {
 	}
 }
 
+// 根据对象key来获取对应的对象
 func (c *threadSafeMap) Get(key string) (item interface{}, exists bool) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
@@ -104,6 +108,7 @@ func (c *threadSafeMap) Get(key string) (item interface{}, exists bool) {
 	return item, exists
 }
 
+// 获取所有对象
 func (c *threadSafeMap) List() []interface{} {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
@@ -116,6 +121,7 @@ func (c *threadSafeMap) List() []interface{} {
 
 // ListKeys returns a list of all the keys of the objects currently
 // in the threadSafeMap.
+// 获取一系列的对象key
 func (c *threadSafeMap) ListKeys() []string {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
@@ -141,7 +147,7 @@ func (c *threadSafeMap) Replace(items map[string]interface{}, resourceVersion st
 
 // Index returns a list of items that match the given object on the index function.
 // Index is thread-safe so long as you treat all items as immutable.
-// 通过指定的索引函数名称计算对象的索引键，找到对象键，从而取出所有的对象
+// 通过指定的索引函数名称计算对象的索引键，找到该对象的所有对象key，从而取出所有的对象
 func (c *threadSafeMap) Index(indexName string, obj interface{}) ([]interface{}, error) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
@@ -153,7 +159,7 @@ func (c *threadSafeMap) Index(indexName string, obj interface{}) ([]interface{},
 		return nil, fmt.Errorf("Index with name %s does not exist", indexName)
 	}
 
-	// 算出对应资源的对象键
+	// 算出对应的索引键值lice
 	indexedValues, err := indexFunc(obj)
 	if err != nil {
 		return nil, err
@@ -188,7 +194,8 @@ func (c *threadSafeMap) Index(indexName string, obj interface{}) ([]interface{},
 }
 
 // ByIndex returns a list of the items whose indexed values in the given index include the given indexed value
-// index是对应的对象建
+// indexName，索引键方法名，indexedValue为索引键，找到索引键对应的obj
+// 返回的是对象列表
 func (c *threadSafeMap) ByIndex(indexName, indexedValue string) ([]interface{}, error) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
@@ -214,6 +221,7 @@ func (c *threadSafeMap) ByIndex(indexName, indexedValue string) ([]interface{}, 
 
 // IndexKeys returns a list of the Store keys of the objects whose indexed values in the given index include the given indexed value.
 // IndexKeys is thread-safe so long as you treat all items as immutable.
+// 返回的是对象key列表
 func (c *threadSafeMap) IndexKeys(indexName, indexedValue string) ([]string, error) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
@@ -270,6 +278,7 @@ func (c *threadSafeMap) AddIndexers(newIndexers Indexers) error {
 // updateIndices must be called from a function that already has a lock on the cache
 func (c *threadSafeMap) updateIndices(oldObj interface{}, newObj interface{}, key string) {
 	// if we got an old object, we need to remove it before we add it again
+	// 如果之前保存过该对象
 	if oldObj != nil {
 		c.deleteFromIndices(oldObj, key)
 	}
@@ -298,16 +307,19 @@ func (c *threadSafeMap) updateIndices(oldObj interface{}, newObj interface{}, ke
 // deleteFromIndices removes the object from each of the managed indexes
 // it is intended to be called from a function that already has a lock on the cache
 func (c *threadSafeMap) deleteFromIndices(obj interface{}, key string) {
+	// 遍历每个索引函数
 	for name, indexFunc := range c.indexers {
+		// 获取索引key
 		indexValues, err := indexFunc(obj)
 		if err != nil {
 			panic(fmt.Errorf("unable to calculate an index entry for key %q on index %q: %v", key, name, err))
 		}
-
+		// 根据索引函数名，找到对应的索引key,
 		index := c.indices[name]
 		if index == nil {
 			continue
 		}
+
 		for _, indexValue := range indexValues {
 			set := index[indexValue]
 			if set != nil {
@@ -329,9 +341,11 @@ func (c *threadSafeMap) Resync() error {
 	return nil
 }
 
+// NewThreadSafeStore 注意这里返回的是指针，也满足ThreadSafeStore接口的定义
 // NewThreadSafeStore creates a new instance of ThreadSafeStore.
 func NewThreadSafeStore(indexers Indexers, indices Indices) ThreadSafeStore {
 	return &threadSafeMap{
+		// 注意这里value是列的对象，每个对象key，对应的是一些列的对象，一堆多
 		items:    map[string]interface{}{},
 		indexers: indexers,
 		indices:  indices,
