@@ -63,6 +63,7 @@ func TestCloseWatchChannelOnError(t *testing.T) {
 	// 初始化reflector的list and watch
 	r.listerWatcher = &testLW{
 		WatchFunc: func(options metav1.ListOptions) (watch.Interface, error) {
+			// 这相当于是一个闭包
 			return fw, nil
 		},
 		ListFunc: func(options metav1.ListOptions) (runtime.Object, error) {
